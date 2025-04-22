@@ -9,11 +9,15 @@ Original file is located at
 
 # Peças: E=Elefante, C=Camelo, A=Cavalo, D=Cachorro, G=Gato, O=Coelho
 
+import sys
+import math
+from copy import deepcopy
+
 class EstadoJogo:
     def __init__(self, tabuleiro, jogador, mov_restantes, fim=False, vencedor=None):
         self.tabuleiro = tabuleiro
-        self.jogador = jogador      # 'Ouro' ou 'Prata'
-        self.mov_restantes = mov_restantes  # 0 a 4
+        self.jogador = jogador
+        self.mov_restantes = mov_restantes
         self.fim = fim
         self.vencedor = vencedor
 
@@ -28,16 +32,14 @@ class EstadoJogo:
 
 def criar_tabuleiro():
     return [
-        # Time Ouro (maiúsculas)
         ['O', 'O', 'O', 'O', 'O', 'G', 'D', 'A'],
         ['E', 'C', 'A', 'D', 'G', 'O', 'O', 'O'],
         [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '],
         [' ', ' ', 'E', ' ', ' ', ' ', ' ', ' '],
         [' ', ' ', 'o', ' ', ' ', ' ', ' ', ' '],
         [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '],
-        # Time Prata (minúsculas)
-        ['o', 'o', 'o', 'o', 'o', 'g', 'd', 'a'],
-        ['e', 'c', 'a', 'd', 'g', 'o', 'o', 'o']
+        [' ', ' ', ' ', ' ', ' ', 'g', 'd', 'a'],
+        ['e', 'c', 'a', 'd', 'g', ' ', ' ', ' ']
     ]
 
 def mostrar_tabuleiro(tab):
@@ -88,11 +90,9 @@ def validar_movimento(tab, x, y, direcao, jogador):
 
     destino = tab[novo_x][novo_y]
 
-    # Movimento simples
     if destino == ' ':
         return True
 
-    # Empurrar peça
     if (jogador == 'Ouro' and destino.islower()) or (jogador == 'Prata' and destino.isupper()):
         if forcas[peca.lower()] > forcas[destino.lower()]:
             empurrar_x = novo_x + dx
@@ -109,18 +109,16 @@ def executar_movimento(estado, origem, direcao):
     tab = novo_estado.tabuleiro
     peca = tab[x][y]
 
-    # Movimento normal ou empurrão
     if tab[x+dx][y+dy] == ' ':
         tab[x][y] = ' '
         tab[x+dx][y+dy] = peca
     else:
-        # Empurrar peça inimiga
         inimigo = tab[x+dx][y+dy]
         tab[x][y] = ' '
         tab[x+dx][y+dy] = peca
-        tab[x+dx*2][y+dy*2] = inimigo
+        if 0 <= x+dx*2 < 8 and 0 <= y+dy*2 < 8:
+            tab[x+dx*2][y+dy*2] = inimigo
 
-    # Puxar peça adjacente
     for dx_p, dy_p in [(-1,0), (1,0), (0,-1), (0,1)]:
         px = x - dx_p
         py = y - dy_p
@@ -146,7 +144,6 @@ def processar_capturas(estado):
                     tab[x][y] = ' '
 
 def verificar_vitoria(estado):
-    # Vitória por coelho na linha final
     linha_alvo = 7 if estado.jogador == 'Ouro' else 0
     peca_alvo = 'O' if estado.jogador == 'Ouro' else 'o'
 
@@ -154,7 +151,6 @@ def verificar_vitoria(estado):
         if estado.tabuleiro[linha_alvo][y] == peca_alvo:
             return True
 
-    # Vitória por eliminação
     coelhos_inimigos = 0
     for linha in estado.tabuleiro:
         for peca in linha:
@@ -162,7 +158,6 @@ def verificar_vitoria(estado):
                 coelhos_inimigos += 1
     return coelhos_inimigos == 0
 
-# Configurações do jogo
 forcas = {'e':6, 'c':5, 'a':4, 'd':3, 'g':2, 'o':1}
 direcoes = {
     'cima': (-1,0),
@@ -171,17 +166,136 @@ direcoes = {
     'direita': (0,1)
 }
 
+class IAJogador:  # <--- CLASSE IA ADICIONADA AQUI
+    def __init__(self, profundidade=2, jogador='Prata'):
+        self.profundidade = profundidade
+        self.jogador = jogador
+
+    def avaliar_estado(self, estado):
+        if estado.fim:
+            return math.inf if estado.vencedor == self.jogador else -math.inf
+
+        score = 0
+        coelhos_inimigos = 0
+        coelhos_aliados = 0
+
+        for x in range(8):
+            for y in range(8):
+                peca = estado.tabuleiro[x][y]
+                if peca == ' ':
+                    continue
+
+                aliado = (self.jogador == 'Prata' and peca.islower()) or (self.jogador == 'Ouro' and peca.isupper())
+
+                valor = forcas[peca.lower()] * 10
+                if aliado:
+                    score += valor
+                    if peca.lower() == 'o':
+                        coelhos_aliados += 1
+                        if self.jogador == 'Prata':
+                            score += x * 5
+                        else:
+                            score += (7 - x) * 5
+                else:
+                    score -= valor
+                    if peca.lower() == 'o':
+                        coelhos_inimigos += 1
+                        if self.jogador == 'Prata':
+                            score -= (7 - x) * 5
+                        else:
+                            score -= x * 5
+
+                centro_x, centro_y = 3.5, 3.5
+                dist_centro = abs(x - centro_x) + abs(y - centro_y)
+                if aliado:
+                    score += (4 - dist_centro) * (2 if peca.lower() != 'o' else 5)
+                else:
+                    score -= (4 - dist_centro) * (2 if peca.lower() != 'o' else 5)
+
+                if verificar_congelamento(estado.tabuleiro, x, y, 'Ouro' if peca.isupper() else 'Prata'):
+                    if aliado:
+                        score -= 15
+                    else:
+                        score += 15
+
+        score += (4 - coelhos_inimigos) * 100
+        score -= (4 - coelhos_aliados) * 100
+        return score
+
+    def gerar_movimentos(self, estado):
+        movimentos = []
+        for x in range(8):
+            for y in range(8):
+                peca = estado.tabuleiro[x][y]
+                if peca == ' ' or (self.jogador == 'Prata' and peca.isupper()) or (self.jogador == 'Ouro' and peca.islower()):
+                    continue
+
+                for direcao in direcoes:
+                    if validar_movimento(estado.tabuleiro, x, y, direcao, estado.jogador):
+                        movimentos.append((x, y, direcao))
+        return movimentos
+
+    def minimax(self, estado, profundidade, alpha, beta, maximizando):
+        if profundidade == 0 or estado.fim:
+            return self.avaliar_estado(estado), None
+
+        movimentos = self.gerar_movimentos(estado)
+        if not movimentos:
+            return self.avaliar_estado(estado), None
+
+        melhor_mov = None
+        if maximizando:
+            max_eval = -math.inf
+            for x, y, dir in movimentos:
+                novo_estado = executar_movimento(deepcopy(estado), (x, y), dir)
+                if novo_estado is None:
+                    continue
+
+                avaliacao, _ = self.minimax(novo_estado, profundidade-1, alpha, beta, False)
+
+                if avaliacao > max_eval:
+                    max_eval = avaliacao
+                    melhor_mov = (x, y, dir)
+                alpha = max(alpha, avaliacao)
+                if beta <= alpha:
+                    break
+            return max_eval, melhor_mov
+        else:
+            min_eval = math.inf
+            for x, y, dir in movimentos:
+                novo_estado = executar_movimento(deepcopy(estado), (x, y), dir)
+                if novo_estado is None:
+                    continue
+
+                avaliacao, _ = self.minimax(novo_estado, profundidade-1, alpha, beta, True)
+
+                if avaliacao < min_eval:
+                    min_eval = avaliacao
+                    melhor_mov = (x, y, dir)
+                beta = min(beta, avaliacao)
+                if beta <= alpha:
+                    break
+            return min_eval, melhor_mov
+
+    def melhor_jogada(self, estado):
+        if estado.jogador != self.jogador:
+            return None
+
+        _, movimento = self.minimax(estado, self.profundidade, -math.inf, math.inf, True)
+        return movimento
+
 def main():
     estado = EstadoJogo(criar_tabuleiro(), 'Ouro', 4)
+    ia = IAJogador(profundidade=2, jogador='Prata')
 
-    print("- Cada jogador tem 4 movimentos por turno")
-    print("- Peças fortes podem empurrar peças mais fracas")
-    print("- Peças podem puxar inimigos após movimento")
-    print("- Peças congeladas são capturadas no fim do turno\n")
+    print("Bem-vindo ao Arimaa!")
+    print("Você joga como Ouro (peças maiúsculas)")
+    print("Digite movimentos no formato 'a3 cima'")
+    print("---------------------------------------")
 
     while not estado.fim:
         mostrar_tabuleiro(estado.tabuleiro)
-        print(f"Jogador: {estado.jogador}")
+        print(f"Turno de: {estado.jogador}")
         print(f"Movimentos restantes: {estado.mov_restantes}")
 
         if estado.mov_restantes == 0:
@@ -190,33 +304,46 @@ def main():
             estado.mov_restantes = 4
             continue
 
-        try:
-            entrada = input("Digite posição e direção (ex: a7 cima): ").lower().split()
-            if len(entrada) != 2:
-                print("Formato inválido! Use: letra número direção")
-                continue
+        if estado.jogador == 'Prata':
+            print("\nIA está jogando...")
+            movimento = ia.melhor_jogada(estado)
 
-            pos, dir = entrada
-            if len(pos) != 2 or not pos[0].isalpha() or not pos[1].isdigit():
-                print("Posição inválida!")
-                continue
+            if movimento:
+                x, y, dir = movimento
+                pos = f"{chr(y + ord('a'))}{8 - x}"
+                print(f"IA moveu: {pos} {dir}")
+                estado = executar_movimento(estado, (x, y), dir)
+            else:
+                print("IA não encontrou movimentos válidos!")
+                estado.mov_restantes = 0
+        else:
+            try:
+                entrada = input("Sua jogada (ex: a7 cima): ").lower().split()
+                if len(entrada) != 2:
+                    print("Formato inválido! Use: letra número direção")
+                    continue
 
-            y = ord(pos[0]) - ord('a')
-            x = 8 - int(pos[1])
+                pos, dir = entrada
+                if len(pos) != 2 or not pos[0].isalpha() or not pos[1].isdigit():
+                    print("Posição inválida!")
+                    continue
 
-            if not validar_movimento(estado.tabuleiro, x, y, dir, estado.jogador):
-                print("Movimento inválido!")
-                continue
+                y = ord(pos[0]) - ord('a')
+                x = 8 - int(pos[1])
 
-            estado = executar_movimento(estado, (x, y), dir)
+                if not validar_movimento(estado.tabuleiro, x, y, dir, estado.jogador):
+                    print("Movimento inválido!")
+                    continue
 
-            if verificar_vitoria(estado):
-                print(f"\n=== {estado.jogador} VENCEU! ===")
-                estado.fim = True
-                mostrar_tabuleiro(estado.tabuleiro)
+                estado = executar_movimento(estado, (x, y), dir)
 
-        except Exception as e:
-            print(f"Erro: {str(e)}")
+            except Exception as e:
+                print(f"Erro: {str(e)}")
+
+        if verificar_vitoria(estado):
+            estado.fim = True
+            print(f"\n=== {estado.jogador} VENCEU! ===")
+            mostrar_tabuleiro(estado.tabuleiro)
 
 if __name__ == "__main__":
     main()
